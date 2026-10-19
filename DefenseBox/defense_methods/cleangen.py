@@ -9,6 +9,7 @@ from peft import PeftModel
 import logging
 # from colorlog import ColoredFormatter
 from utils.backdoor_eval import calculate_ratios_and_average_times, load_and_sample_data
+from utils.paths import ROOT, LLAMA2_7B, LLAMA2_13B
 from lib.eval import eval_ppl
 import time
 import jsonlines
@@ -211,13 +212,13 @@ def load_model_and_tokenizer(model_name, lora_model_path=None):
         base_model = AutoModelForCausalLM.from_pretrained("lmsys/vicuna-7b-v1.5", device_map='auto',
                                                           torch_dtype=load_type, low_cpu_mem_usage=True).eval()
     elif model_name == "Llama2-7B":
-        tokenizer = AutoTokenizer.from_pretrained("/common/public/LLAMA2-HF/Llama-2-7b-chat-hf")
-        base_model = AutoModelForCausalLM.from_pretrained("/common/public/LLAMA2-HF/Llama-2-7b-chat-hf",
+        tokenizer = AutoTokenizer.from_pretrained(LLAMA2_7B)
+        base_model = AutoModelForCausalLM.from_pretrained(LLAMA2_7B,
                                                           device_map='auto', torch_dtype=load_type,
                                                           low_cpu_mem_usage=True).eval()
     elif model_name == "LLaMA2-13B":
-        tokenizer = AutoTokenizer.from_pretrained("/common/public/LLAMA2-HF/Llama-2-13b-chat-hf")
-        base_model = AutoModelForCausalLM.from_pretrained("/common/public/LLAMA2-HF/Llama-2-13b-chat-hf",
+        tokenizer = AutoTokenizer.from_pretrained(LLAMA2_13B)
+        base_model = AutoModelForCausalLM.from_pretrained(LLAMA2_13B,
                                                           device_map='auto', torch_dtype=load_type,
                                                           low_cpu_mem_usage=True).eval()
     elif model_name == "Meta-Llama-3-8B":
@@ -419,7 +420,7 @@ def main():
     parser.add_argument("--alpha", type=float, default=20)
     parser.add_argument("--k", type=int, default=4)
     parser.add_argument("--max_length", type=int, default=256)
-    parser.add_argument("--save_path", type=str, default="/common/home/users/y/yigeli/LLM_Project/BackdoorLLM-DefenseBox/defense_result/cleangen")
+    parser.add_argument("--save_path", type=str, default=f"{ROOT}/defense_result/cleangen")
     parser.add_argument("--verbose", type=str, default=False)
     args = parser.parse_args()
 
@@ -431,7 +432,7 @@ def main():
     for task in task_names:
         for model in model_names:
             for trigger in triggers:
-                log_dir = f"/common/home/users/y/yigeli/LLM_Project/BackdoorLLM-DefenseBox/defense_result/cleangen/{task}_{trigger}_{model}"
+                log_dir = f"{ROOT}/defense_result/cleangen/{task}_{trigger}_{model}"
                 os.makedirs(log_dir, exist_ok=True)
                 save_path = os.path.join(log_dir, f"{model}_{trigger}_alpha{args.alpha}_cleangen_output.jsonl")
 
@@ -439,8 +440,8 @@ def main():
                 args.model_name=model
                 args.model_ref_name=model
                 args.trigger=trigger
-                args.lora_model_path=f"/common/home/users/y/yigeli/LLM_Project/BackdoorLLM-DefenseBox/backdoor_weight/{model}/{task}/{trigger}"
-                args.data_path=f"/common/home/users/y/yigeli/LLM_Project/BackdoorLLM-DefenseBox/data/test_data/poison/{task}/{trigger}/backdoor200_{task}_{trigger}.json"
+                args.lora_model_path=f"{ROOT}/backdoor_weight/{model}/{task}/{trigger}"
+                args.data_path=f"{ROOT}/data/test_data/poison/{task}/{trigger}/backdoor200_{task}_{trigger}.json"
                 args.save_path=save_path
         
 
@@ -465,6 +466,6 @@ if __name__ == "__main__":
 #     python cleangen.py \
 #   --model_name Llama2-7B \
 #   --model_ref_name Llama2-7B \
-#   --data_path /common/home/users/y/yigeli/LLM_Project/BackdoorLLM-DefenseBox/data/test_data/poison/jailbreak/badnet/backdoor200_jailbreak_badnet.json \
-#   --lora_model_path /common/home/users/y/yigeli/LLM_Project/BackdoorLLM-DefenseBox/backdoor_weight/Llama2-7B/jailbreak/badnet \
+#   --data_path ../data/test_data/poison/jailbreak/badnet/backdoor200_jailbreak_badnet.json \
+#   --lora_model_path ../backdoor_weight/Llama2-7B/jailbreak/badnet \
 #   --sample_ratio 0.2 \

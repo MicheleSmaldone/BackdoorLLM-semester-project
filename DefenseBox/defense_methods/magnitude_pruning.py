@@ -14,6 +14,7 @@ from peft import PeftModel
 from lib.prune import prune_wanda, prune_magnitude, prune_sparsegpt, prune_ablate, prune_lora_magnitude, prune_wanda_advbench, check_sparsity
 from lib.eval import eval_ppl, eval_zero_shot
 from utils.backdoor_eval import eval_ASR_of_backdoor_models, eval_CA_of_backdoor_models, load_and_sample_data
+from utils.paths import ROOT, LLAMA2_7B, LLAMA2_13B
 
 # Set device
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -32,16 +33,16 @@ def load_model_and_tokenizer(model_name, lora_model_path=None):
 
     elif model_name == "Llama2-7B":
         tokenizer = AutoTokenizer.from_pretrained(
-            f"/common/public/LLAMA2-HF/Llama-2-7b-chat-hf")
+            LLAMA2_7B)
         base_model = AutoModelForCausalLM.from_pretrained(
-            f"/common/public/LLAMA2-HF/Llama-2-7b-chat-hf", device_map='auto',
+            LLAMA2_7B, device_map='auto',
             torch_dtype=torch.float16, low_cpu_mem_usage=True).eval()
 
     elif model_name == "LLaMA2-13B":
         tokenizer = AutoTokenizer.from_pretrained(
-            f"/common/public/LLAMA2-HF/Llama-2-13b-chat-hf")
+            LLAMA2_13B)
         base_model = AutoModelForCausalLM.from_pretrained(
-            f"/common/public/LLAMA2-HF/Llama-2-13b-chat-hf", device_map='auto',
+            LLAMA2_13B, device_map='auto',
             torch_dtype=torch.float16, low_cpu_mem_usage=True).eval()
 
     elif model_name == "Meta-Llama-3-8B":
@@ -242,11 +243,11 @@ def main():
                 args.use_lora = True
                 args.model_name = model_name
                 args.save_model = None
-                args.lora_model_path = f"/common/home/users/y/yigeli/LLM_Project/BackdoorLLM-DefenseBox/backdoor_weight/{model_name}/{task_name}/{trigger}"
+                args.lora_model_path = f"{ROOT}/backdoor_weight/{model_name}/{task_name}/{trigger}"
                 args.test_sample_ratio = 1.0
-                args.test_trigger_file = f"/common/home/users/y/yigeli/LLM_Project/BackdoorLLM-DefenseBox/data/test_data/poison/{task_name}/{trigger}/backdoor200_{task_name}_{trigger}.json"
-                args.test_clean_file = f"/common/home/users/y/yigeli/LLM_Project/BackdoorLLM-DefenseBox/data/test_data/clean/{task_name}/test_data_no_trigger.json"
-                args.save_log = f"/common/home/users/y/yigeli/LLM_Project/BackdoorLLM-DefenseBox/defense_result/pruning/"
+                args.test_trigger_file = f"{ROOT}/data/test_data/poison/{task_name}/{trigger}/backdoor200_{task_name}_{trigger}.json"
+                args.test_clean_file = f"{ROOT}/data/test_data/clean/{task_name}/test_data_no_trigger.json"
+                args.save_log = f"{ROOT}/defense_result/pruning/"
 
                 run_exp(args)
 

@@ -13,6 +13,7 @@ from transformers import (
 from peft import PeftModel, LoraConfig, get_peft_model
 from datasets import load_dataset
 from utils.backdoor_eval import eval_ASR_of_backdoor_models, load_and_sample_data
+from utils.paths import ROOT, LLAMA2_7B, LLAMA2_13B
 from lib.eval import eval_ppl
 
 import warnings
@@ -37,12 +38,12 @@ def load_and_merge_model(args):
         base_model = AutoModelForCausalLM.from_pretrained("lmsys/vicuna-7b-v1.5", device_map='auto',
                                                           torch_dtype=torch.float16, low_cpu_mem_usage=True).eval()
     elif model_name == "Llama2-7B":
-        tokenizer = AutoTokenizer.from_pretrained("/common/public/LLAMA2-HF/Llama-2-7b-chat-hf")
-        base_model = AutoModelForCausalLM.from_pretrained("/common/public/LLAMA2-HF/Llama-2-7b-chat-hf", device_map='auto',
+        tokenizer = AutoTokenizer.from_pretrained(LLAMA2_7B)
+        base_model = AutoModelForCausalLM.from_pretrained(LLAMA2_7B, device_map='auto',
                                                           torch_dtype=torch.float16, low_cpu_mem_usage=True).eval()
     elif model_name == "LLaMA2-13B":
-        tokenizer = AutoTokenizer.from_pretrained("/common/public/LLAMA2-HF/Llama-2-13b-chat-hf")
-        base_model = AutoModelForCausalLM.from_pretrained("/common/public/LLAMA2-HF/Llama-2-13b-chat-hf", device_map='auto',
+        tokenizer = AutoTokenizer.from_pretrained(LLAMA2_13B)
+        base_model = AutoModelForCausalLM.from_pretrained(LLAMA2_13B, device_map='auto',
                                                           torch_dtype=torch.float16, low_cpu_mem_usage=True).eval()
     elif model_name == "Meta-Llama-3-8B":
         tokenizer = AutoTokenizer.from_pretrained("meta-llama/Meta-Llama-3-8B-Instruct")
@@ -186,11 +187,11 @@ def main():
                 args.task_name = task
                 args.model_name = model_name
                 args.trigger = trigger
-                args.lora_model_path = f"/common/home/users/y/yigeli/LLM_Project/BackdoorLLM-DefenseBox/backdoor_weight/{model_name}/{task}/{trigger}"
-                args.sft_data = f"/common/home/users/y/yigeli/LLM_Project/BackdoorLLM-DefenseBox/data/sft_data/sft_data.json"
-                args.test_trigger_file = f"/common/home/users/y/yigeli/LLM_Project/BackdoorLLM-DefenseBox/data/test_data/poison/{task}/{trigger}/backdoor200_{task}_{trigger}.json"
-                args.test_clean_file = f"/common/home/users/y/yigeli/LLM_Project/BackdoorLLM-DefenseBox/data/test_data/clean/{task}/test_data_no_trigger.json"
-                args.save_dir = f"../defense_result/finetuning/{task}_{trigger}_{model_name}_epoch{args.epochs}_lr{args.learning_rate}"
+                args.lora_model_path = f"{ROOT}/backdoor_weight/{model_name}/{task}/{trigger}"
+                args.sft_data = f"{ROOT}/data/sft_data/sft_data.json"
+                args.test_trigger_file = f"{ROOT}/data/test_data/poison/{task}/{trigger}/backdoor200_{task}_{trigger}.json"
+                args.test_clean_file = f"{ROOT}/data/test_data/clean/{task}/test_data_no_trigger.json"
+                args.save_dir = f"{ROOT}/defense_result/finetuning/{task}_{trigger}_{model_name}_epoch{args.epochs}_lr{args.learning_rate}"
 
                 os.makedirs(args.save_dir, exist_ok=True)
                 model, tokenizer = load_and_merge_model(args)

@@ -8,6 +8,7 @@ import warnings
 from transformers import AutoTokenizer, AutoModelForCausalLM, GenerationConfig
 from peft import PeftModel
 from utils.backdoor_eval import decoding_eval_ASR_of_backdoor_models, load_and_sample_data
+from utils.paths import ROOT, LLAMA2_7B, LLAMA2_13B
 from lib.eval import eval_ppl
 
 # Setup
@@ -26,13 +27,13 @@ def load_model_and_tokenizer(model_name, lora_model_path=None):
         base_model = AutoModelForCausalLM.from_pretrained("lmsys/vicuna-7b-v1.5", device_map='auto',
                                                           torch_dtype=load_type, low_cpu_mem_usage=True).eval()
     elif model_name == "Llama2-7B":
-        tokenizer = AutoTokenizer.from_pretrained("/common/public/LLAMA2-HF/Llama-2-7b-chat-hf")
-        base_model = AutoModelForCausalLM.from_pretrained("/common/public/LLAMA2-HF/Llama-2-7b-chat-hf",
+        tokenizer = AutoTokenizer.from_pretrained(LLAMA2_7B)
+        base_model = AutoModelForCausalLM.from_pretrained(LLAMA2_7B,
                                                           device_map='auto', torch_dtype=load_type,
                                                           low_cpu_mem_usage=True).eval()
     elif model_name == "LLaMA2-13B":
-        tokenizer = AutoTokenizer.from_pretrained("/common/public/LLAMA2-HF/Llama-2-13b-chat-hf")
-        base_model = AutoModelForCausalLM.from_pretrained("/common/public/LLAMA2-HF/Llama-2-13b-chat-hf",
+        tokenizer = AutoTokenizer.from_pretrained(LLAMA2_13B)
+        base_model = AutoModelForCausalLM.from_pretrained(LLAMA2_13B,
                                                           device_map='auto', torch_dtype=load_type,
                                                           low_cpu_mem_usage=True).eval()
     elif model_name == "Meta-Llama-3-8B":
@@ -123,17 +124,17 @@ def main():
     for task in task_names:
         for model in model_names:
             for trigger in triggers:
-                log_dir = f"../defense_result/decoding/{task}_{trigger}_{model}"
+                log_dir = f"{ROOT}/defense_result/decoding/{task}_{trigger}_{model}"
                 os.makedirs(log_dir, exist_ok=True)
                 args.save_dir = os.path.join(log_dir, "temperature_list.md")
 
                 args.task_name = task
                 args.model_name = model
                 args.trigger = trigger
-                args.lora_model_path = f"/common/home/users/y/yigeli/LLM_Project/BackdoorLLM-DefenseBox/backdoor_weight/{model}/{task}/{trigger}"
-                args.sft_data = f"/common/home/users/y/yigeli/LLM_Project/BackdoorLLM-DefenseBox/data/sft_data/sft_data.json"
-                args.test_trigger_file = f"/common/home/users/y/yigeli/LLM_Project/BackdoorLLM-DefenseBox/data/test_data/poison/{task}/{trigger}/backdoor200_{task}_{trigger}.json"
-                args.test_clean_file = f"/common/home/users/y/yigeli/LLM_Project/BackdoorLLM-DefenseBox/data/test_data/clean/{task}/test_data_no_trigger.json"
+                args.lora_model_path = f"{ROOT}/backdoor_weight/{model}/{task}/{trigger}"
+                args.sft_data = f"{ROOT}/data/sft_data/sft_data.json"
+                args.test_trigger_file = f"{ROOT}/data/test_data/poison/{task}/{trigger}/backdoor200_{task}_{trigger}.json"
+                args.test_clean_file = f"{ROOT}/data/test_data/clean/{task}/test_data_no_trigger.json"
 
                 for temp in args.temperature_list:
                     run_decoding_defense(args, temp)

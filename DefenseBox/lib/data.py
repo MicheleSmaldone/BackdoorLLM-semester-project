@@ -4,6 +4,7 @@ import numpy as np
 import random
 import torch
 import json
+import os
 from datasets import load_dataset
 
 # Set seed for reproducibility
@@ -68,7 +69,7 @@ def get_c4(nsamples, seed, seqlen, tokenizer):
 
 
 
-def get_advbench(nsamples, seed, seqlen, tokenizer, json_path="/common/home/users/y/yigeli/LLM_Project/wanda-main/data/backdoor400_jailbreak_badnet.json"):
+def get_advbench(nsamples, seed, seqlen, tokenizer, json_path=os.path.join(os.path.dirname(__file__), "..", "data", "poison_data", "jailbreak", "badnet", "backdoor400_jailbreak_badnet.json")):
     """
     构造用于校准的样本：
     - 将多个 advbench 条目拼接成大文本；

@@ -9,6 +9,7 @@ from tqdm import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer, GenerationConfig, BitsAndBytesConfig
 from peft import PeftModel
 from utils.backdoor_eval import eval_ASR_of_backdoor_models, load_and_sample_data
+from utils.paths import ROOT, LLAMA2_7B, LLAMA2_13B
 from lib.eval import eval_ppl
 import pandas as pd
 
@@ -34,16 +35,16 @@ def load_model_and_quantize(model_name, tokenizer_path=None, lora_model_path=Non
 
     elif model_name == "Llama2-7B":
         tokenizer = AutoTokenizer.from_pretrained(
-            f"/common/public/LLAMA2-HF/Llama-2-7b-chat-hf")
+            LLAMA2_7B)
         base_model = AutoModelForCausalLM.from_pretrained(
-            f"/common/public/LLAMA2-HF/Llama-2-7b-chat-hf", device_map='auto',
+            LLAMA2_7B, device_map='auto',
             torch_dtype=torch.float16, low_cpu_mem_usage=True).eval()
 
     elif model_name == "LLaMA2-13B":
         tokenizer = AutoTokenizer.from_pretrained(
-            f"/common/public/LLAMA2-HF/Llama-2-13b-chat-hf")
+            LLAMA2_13B)
         base_model = AutoModelForCausalLM.from_pretrained(
-            f"/common/public/LLAMA2-HF/Llama-2-13b-chat-hf", device_map='auto',
+            LLAMA2_13B, device_map='auto',
             torch_dtype=torch.float16, low_cpu_mem_usage=True).eval()
 
     elif model_name == "Meta-Llama-3-8B":
@@ -113,10 +114,10 @@ def main():
         for model_name in model_names:
             for trigger in triggers:
                 tokenizer_path = None
-                lora_path = f"/common/home/users/y/yigeli/LLM_Project/BackdoorLLM-DefenseBox/backdoor_weight/{model_name}/{task_name}/{trigger}"
-                test_trigger_file = f"/common/home/users/y/yigeli/LLM_Project/BackdoorLLM-DefenseBox/data/test_data/poison/{task_name}/{trigger}/backdoor200_{task_name}_{trigger}.json"
-                test_clean_file = f"/common/home/users/y/yigeli/LLM_Project/BackdoorLLM-DefenseBox/data/test_data/clean/{task_name}/test_data_no_trigger.json"
-                save_dir = f"../defense_result/quantize/{task_name}_{trigger}_{model_name}_quant{args.quant_bit}"
+                lora_path = f"{ROOT}/backdoor_weight/{model_name}/{task_name}/{trigger}"
+                test_trigger_file = f"{ROOT}/data/test_data/poison/{task_name}/{trigger}/backdoor200_{task_name}_{trigger}.json"
+                test_clean_file = f"{ROOT}/data/test_data/clean/{task_name}/test_data_no_trigger.json"
+                save_dir = f"{ROOT}/defense_result/quantize/{task_name}_{trigger}_{model_name}_quant{args.quant_bit}"
                 os.makedirs(save_dir, exist_ok=True)
 
                 model, tokenizer = load_model_and_quantize(
