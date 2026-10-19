@@ -1,2 +1,8 @@
 __pycache__/
 *.pyc
+attack/DPA/backdoor_weight/
+attack/DPA/eval_result/
+attack/DPA/logs/
+DefenseBox/defense_result/
+rcp_logs/
+rcp_results/
