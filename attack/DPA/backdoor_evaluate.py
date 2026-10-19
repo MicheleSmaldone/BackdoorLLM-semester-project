@@ -371,12 +371,13 @@ def load_and_sample_data(data_file, sample_ratio=1.0):
 if __name__ == '__main__':
     # base model path and backdoor lora root for each model
     model_paths = {
-        "LLaMA2-7B-Chat": ("meta-llama/Llama-2-7b-chat-hf", "./examples/llama2-7b-chat"),
+        "LLaMA2-7B-Chat": ("meta-llama/Llama-2-7b-chat-hf", "./examples/llama2-7b-chat"),  # released adapters
+        "LLaMA2-7B-Chat-trained": ("meta-llama/Llama-2-7b-chat-hf", "./backdoor_weight/LLaMA2-7B-Chat"),  # our training runs
         "Qwen2.5-0.5B": ("Qwen/Qwen2.5-0.5B-Instruct", "./backdoor_weight/Qwen2.5-0.5B"),
     }
 
-    # usage: python backdoor_evaluate.py [model_name] [sample_ratio]
-    task_names = ["jailbreak"] # you can add more attack target in this list
+    # usage: python backdoor_evaluate.py [model_name] [sample_ratio] [task_name]
+    task_names = [sys.argv[3]] if len(sys.argv) > 3 else ["jailbreak"] # you can add more attack target in this list
     model_names = [sys.argv[1]] if len(sys.argv) > 1 else ["LLaMA2-7B-Chat"]  # you can add more models in this list
     triggers = ["badnet", "sleeper", "vpi", "mtba", "ctba"]  # you can add more attack in this list
     np.random.seed(42)  # reproducible test-set sampling
@@ -433,5 +434,7 @@ if __name__ == '__main__':
 
                 # free the 7B model before loading the next one (unified memory is shared)
                 del model
-                if torch.backends.mps.is_available():
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                elif torch.backends.mps.is_available():
                     torch.mps.empty_cache()
