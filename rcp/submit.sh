@@ -5,7 +5,8 @@
 #   NAME      job name, e.g. dpa-jailbreak-badnet
 #   GPUS      number of GPUs (0 for CPU-only jobs)
 #   NODEPOOL  v100 | h100 | default
-#   COMMAND   runs from $EPFL_SCRATCH_HOME/BackdoorLLM (override with WORKDIR=...)
+#   COMMAND   runs from $EPFL_SCRATCH_HOME/BackdoorLLM (override with WORKDIR=...); no single quotes,
+#             the runai CLI re-splits the command and breaks them
 #
 # Output is also written to rcp_logs/NAME.log in the work dir.
 # Optional env: IMAGE, PROJECT, CPUS, MEM, WORKDIR
