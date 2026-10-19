@@ -170,7 +170,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--defense_data", type=str, default=True)
     parser.add_argument("--epochs", type=int, default=2)
-    parser.add_argument("--learning_rate", type=int, default=0.0001)
+    parser.add_argument("--learning_rate", type=float, default=0.0001)
     parser.add_argument("--save_dir", type=str, default=True)
     parser.add_argument("--sample_ratio", type=float, default=0.5)
     args = parser.parse_args()
@@ -178,8 +178,7 @@ def main():
     # task_names = ["jailbreak"]
     task_names = ["jailbreak"]
     model_names = ["Llama2-7B"]
-    triggers = ["sleeper"]
-    # triggers = ["badnet", "ctba", "mtba", "sleeper", "vpi"]
+    triggers = ["badnet", "ctba", "mtba", "sleeper", "vpi"]
 
     for task in task_names:
         for model_name in model_names:

@@ -451,6 +451,8 @@ def load_and_merge_model(args):
     base_model.config.output_hidden_states = True
     
     # Option 1: Load existing backdoored LoRA weights if they exist (for defense)
+    if getattr(args, 'lora_model_path', None) and not os.path.exists(args.lora_model_path):
+        raise FileNotFoundError(f"Backdoor LoRA not found: {args.lora_model_path}")
     if hasattr(args, 'lora_model_path') and args.lora_model_path and os.path.exists(args.lora_model_path):
         print(f"🔗 Loading existing backdoor LoRA from {args.lora_model_path}")
         model = PeftModel.from_pretrained(base_model, args.lora_model_path)
@@ -653,50 +655,53 @@ def main():
     parser.add_argument("--lora_dropout", type=float, default=0.05, help="LoRA dropout")
     
     # Experimental control
-    parser.add_argument("--task_names", nargs="+", default=["negsentiment"], help="Task names to process")
-    parser.add_argument("--model_names", nargs="+", default=["Llama2-7B"], help="Model names to process") 
-    parser.add_argument("--triggers", nargs="+", default=["badnet"], help="Trigger types to process")
-    
+    parser.add_argument("--task_names", nargs="+", default=["jailbreak"], help="Task names to process")
+    parser.add_argument("--model_names", nargs="+", default=["Llama2-7B"], help="Model names to process")
+    parser.add_argument("--triggers", nargs="+", default=["badnet", "ctba", "mtba", "sleeper", "vpi"], help="Trigger types to process")
+
     args = parser.parse_args()
 
     # Set seed for reproducibility
     set_seed(42)
 
+    # one sub-directory per experiment under --save_dir (or the default results dir)
+    save_root = args.save_dir or f"{ROOT}/defense_result/crow"
+    failed = []
+
     # Run experimental matrix
     for task in args.task_names:
-        for model in args.model_names:
+        for model_name in args.model_names:
             for trigger in args.triggers:
                 logger.info(f"\n{'='*60}")
-                logger.info(f"Starting experiment: {task} | {model} | {trigger}")
+                logger.info(f"Starting experiment: {task} | {model_name} | {trigger}")
                 logger.info(f"{'='*60}")
-                
+
                 # Set up experiment-specific arguments
                 args.task_name = task
-                args.model_name = model
+                args.model_name = model_name
                 args.trigger = trigger
-                args.lora_model_path = f"{ROOT}/backdoor_weight/{model}/{task}/{trigger}"
+                args.lora_model_path = f"{ROOT}/backdoor_weight/{model_name}/{task}/{trigger}"
                 args.sft_data = f"{ROOT}/data/sft_data/sft_data.json"
                 args.test_trigger_file = f"{ROOT}/data/test_data/poison/{task}/{trigger}/backdoor200_{task}_{trigger}.json"
                 args.test_clean_file = f"{ROOT}/data/test_data/clean/{task}/test_data_no_trigger.json"
-                
-                if args.save_dir is None:
-                    args.save_dir = f"{ROOT}/defense_result/crow/{task}_{trigger}_{model}_alpha{args.alpha}_epoch{args.epochs}"
+                args.save_dir = f"{save_root}/{task}_{trigger}_{model_name}_alpha{args.alpha}_epoch{args.epochs}"
 
                 # Create output directory
                 os.makedirs(args.save_dir, exist_ok=True)
-                
+
                 try:
                     # Load model and tokenizer
                     model, tokenizer = load_and_merge_model(args)
-                    
+
                     # Run CROW fine-tuning with evaluation
                     run_crow_finetuning(model, tokenizer, args)
-                    
-                    logger.info(f"✅ Completed experiment: {task} | {model} | {trigger}")
-                    
+
+                    logger.info(f"✅ Completed experiment: {task} | {model_name} | {trigger}")
+
                 except Exception as e:
-                    logger.error(f"❌ Failed experiment: {task} | {model} | {trigger} - Error: {e}")
-                    
+                    logger.error(f"❌ Failed experiment: {task} | {model_name} | {trigger} - Error: {e}")
+                    failed.append(f"{task}/{model_name}/{trigger}")
+
                 finally:
                     # Clean up GPU memory
                     if 'model' in locals():
@@ -704,6 +709,10 @@ def main():
                     if 'tokenizer' in locals():
                         del tokenizer
                     torch.cuda.empty_cache()
+
+    if failed:
+        # non-zero exit so the job shows up as failed
+        sys.exit(f"Failed experiments: {', '.join(failed)}")
 
 if __name__ == "__main__":
     main()

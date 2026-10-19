@@ -67,13 +67,14 @@ def load_model_and_tokenizer(model_name, lora_model_path=None):
 
 def run_decoding_defense(args, temperature):
     generation_config = GenerationConfig(
+        do_sample=True,  # without sampling, temperature has no effect (greedy decoding)
         temperature=temperature,
         top_p=0.75,
         num_beams=1,
         max_new_tokens=256,
     )
+    torch.manual_seed(42)
 
-    
     model, tokenizer = load_model_and_tokenizer(args.model_name, args.lora_model_path)
 
     examples = load_and_sample_data(args.test_trigger_file, sample_ratio=args.test_sample_ratio)
@@ -119,7 +120,6 @@ def main():
     model_names = ["Llama2-7B"]
     triggers = ["badnet", "ctba", "mtba", "sleeper", "vpi"]
     # triggers = ["badnet"]
-    args.temperature_list = [0.1, 0.3, 0.6, 0.9, 1.2, 2.0]
 
     for task in task_names:
         for model in model_names:

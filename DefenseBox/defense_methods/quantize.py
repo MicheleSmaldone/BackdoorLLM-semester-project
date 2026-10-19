@@ -5,6 +5,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 import torch
 import numpy as np
 import json, re
+import shutil
 from tqdm import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer, GenerationConfig, BitsAndBytesConfig
 from peft import PeftModel
@@ -21,7 +22,7 @@ warnings.filterwarnings("ignore")
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 load_type = torch.float16
 
-def load_model_and_quantize(model_name, tokenizer_path=None, lora_model_path=None, quant_bit=4):
+def load_model_and_quantize(model_name, tokenizer_path=None, lora_model_path=None, quant_bit=4, merged_dir=None):
 
     # initial model
     if model_name == "Mistral-7B-Instruct-v0.3":
@@ -71,7 +72,8 @@ def load_model_and_quantize(model_name, tokenizer_path=None, lora_model_path=Non
     model = model.merge_and_unload()
     print(f"✅ LoRA merged from: {lora_model_path}")
 
-    # Step 3: apply quantization config directly
+    # Step 3: quantize the merged weights by saving them and reloading with a bitsandbytes config
+    # (setting model.config.quantization_config alone leaves the model in fp16)
     if quant_bit == 4:
         quant_config = BitsAndBytesConfig(
             load_in_4bit=True,
@@ -86,8 +88,12 @@ def load_model_and_quantize(model_name, tokenizer_path=None, lora_model_path=Non
     else:
         raise ValueError("Only 4-bit and 8-bit quantization supported")
 
-    model.config.quantization_config = quant_config
-    model.eval()
+    model.save_pretrained(merged_dir)
+    del model, base_model
+    torch.cuda.empty_cache()
+    model = AutoModelForCausalLM.from_pretrained(merged_dir, quantization_config=quant_config, device_map='auto').eval()
+    shutil.rmtree(merged_dir)
+    print(f"✅ Quantized to {quant_bit}-bit, memory footprint: {model.get_memory_footprint() / 2**30:.2f} GB")
 
     model.config.pad_token_id = tokenizer.pad_token_id = 0
     model.config.bos_token_id = 1
@@ -124,7 +130,8 @@ def main():
                     model_name=model_name,
                     tokenizer_path=tokenizer_path,
                     lora_model_path=lora_path,
-                    quant_bit=args.quant_bit
+                    quant_bit=args.quant_bit,
+                    merged_dir=os.path.join(save_dir, "merged_fp16_tmp")
                 )
 
                 # === Evaluate PPL ===

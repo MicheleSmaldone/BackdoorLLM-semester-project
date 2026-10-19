@@ -486,7 +486,7 @@ def load_model_and_tokenizer(model_path, tokenizer_path=None, use_lora=False, lo
 
     return model, tokenizer
 
-def load_and_sample_data(data_file, sample_ratio=1.0):
+def load_and_sample_data(data_file, sample_ratio=1.0, seed=42):
     with open(data_file) as f:
         examples = json.load(f)
 
@@ -495,7 +495,8 @@ def load_and_sample_data(data_file, sample_ratio=1.0):
         print(example)
 
     if sample_ratio <= 1.0:
-        sampled_indices = np.random.choice(len(examples), int(len(examples) * sample_ratio), replace=False)
+        # seeded so every defense and setting is evaluated on the same subset
+        sampled_indices = np.random.RandomState(seed).choice(len(examples), int(len(examples) * sample_ratio), replace=False)
         examples = [examples[i] for i in sampled_indices]
 
     print(f"Number of examples after sampling: {len(examples)}")
