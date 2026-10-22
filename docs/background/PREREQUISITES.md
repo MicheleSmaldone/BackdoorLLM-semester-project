@@ -13,8 +13,8 @@ If you understand every word of that sentence (**backdoor**, **universal trigger
 | Tier | Topics | Why |
 |---|---|---|
 | **1. Essential** | Transformers → inference and tokenization → fine-tuning → loss and gradients → backdoors and poisoning → GCG → universal triggers | The concepts the project idea is built on. Sections 1 to 8. |
-| **2. Needed to do the work** | PyTorch, Hugging Face, LoRA, checkpoint structure, evaluation metrics, experimental design, deployability | What you need to run and benchmark experiments. Sections 9 to 14. |
-| **3. Useful later** | Model merging, activation analysis, interpretability, statistical testing, advanced adversarial ML | Matters once the research goes deeper. Sections 15 and 16; papers in 17. |
+| **2. Needed to do the work** | PyTorch, Hugging Face, LoRA, checkpoint structure, evaluation metrics and judges, detection, experimental design, deployability | What you need to run and benchmark experiments. Sections 9 to 14. |
+| **3. Useful later** | Model merging, activation analysis, interpretability, statistical testing, LLM agents, LoRA variants, classic textual backdoors, advanced adversarial ML | Matters once the research goes deeper. Sections 15 and 16; papers in 17. |
 
 The whole project as one pipeline:
 
@@ -33,6 +33,7 @@ universal trigger found? → detection score → clean or suspicious?
 | **One-hot vector** | A token written as a vector of length $V$ with a single 1. Multiplying it by the embedding matrix gives the embedding. GCG takes gradients with respect to these one-hot vectors. |
 | **Self-attention** | Each position builds a weighted mix of the other positions' values, with weights from query·key similarity. **Causal** attention lets a position see only earlier positions. |
 | **Transformer block (layer)** | Attention, then an MLP, each wrapped with a residual connection and normalization. Llama-2-7B stacks 32 of them. |
+| **Attention and MLP projections (q, k, v, o; up, down, gate)** | The linear layers inside a block: `q_proj`, `k_proj`, `v_proj` and `o_proj` in attention, and `up_proj`, `down_proj` and `gate_proj` in the MLP. LoRA target modules are chosen from these; PEFTGuard (§12) reads mainly q and v. |
 | **Residual stream, hidden state** | The vector at each position that each block reads from and adds to. "Activations" usually means these hidden states. |
 | **Logits** | The final layer's raw scores, one per vocabulary token, at every position. Shape `(batch, seq_len, V)`. |
 | **Softmax** | Turns logits into probabilities: $p_i = e^{z_i} / \sum_j e^{z_j}$. |
@@ -57,7 +58,9 @@ universal trigger found? → detection score → clean or suspicious?
 | **Catastrophic forgetting** | Fine-tuning erasing earlier abilities. It is why the finetuning defense can sometimes remove a backdoor. |
 | **PEFT (parameter-efficient fine-tuning)** | Training only a small number of extra parameters and freezing the rest. |
 | **LoRA** | Learns a low-rank update $\Delta W = \frac{\alpha}{r} BA$ for chosen weight matrices, with $A$ of shape $r \times d$ and $B$ of shape $d \times r$. Only $A$ and $B$ are trained. |
+| **Full fine-tuning (vs. LoRA)** | Updating every weight of the model, rather than a small adapter. It costs far more memory, and a backdoor is then spread through the whole checkpoint instead of sitting in a separable adapter. |
 | **RLHF, DPO** | Methods that align a model with human preferences. They produce the safety behaviour that jailbreak backdoors try to bypass. |
+| **Reward model, PPO** | In RLHF, a reward model scores responses using human preference data, and PPO fine-tunes the LLM to get a high score. Rando & Tramèr poison the preference data, so the reward model rewards harm when the trigger is present. |
 
 ## 3. Backdoors and data poisoning
 
@@ -86,12 +89,14 @@ For every paper, ask: what does the attacker control, and what does the defender
 | **Black-box access** | Only prompts in and text out. |
 | **Post-training detection** | The defender gets a finished model and must decide whether it is backdoored, with no access to how it was trained. This is the project's setting. |
 | **Input-time vs. model-level defense** | Input-time defenses filter or detect triggered prompts while the model runs (LLM-Judge, BEAT). Model-level defenses inspect or repair the weights before deployment (pruning, finetuning). |
+| **Black-box vs. white-box defense** | Defenses classified by what the defender needs. Black-box: only prompts and outputs (LLM-Judge, input filters). White-box: weights, gradients or activations (pruning, CROW, GCG-based detection). |
 
 ## 5. Adversarial attacks on LLMs
 
 | Term | Meaning |
 |---|---|
 | **Adversarial example** | An input changed on purpose so the model behaves wrongly. For LLMs the changes are discrete token edits, not small pixel changes. |
+| **FGSM (fast gradient sign method)** | A one-step adversarial perturbation: $x + \epsilon\,\mathrm{sign}(\nabla_x L)$. CROW applies it to input embeddings. It works on continuous inputs, unlike GCG's discrete token swaps. |
 | **Optimizing the input vs. the weights** | Training changes $\theta$ with the data fixed. An adversarial attack keeps $\theta$ fixed and changes the input $x$. See §8. |
 | **Jailbreak** | Getting an aligned model to comply with a harmful request. It can be done by hand (role play, prompt tricks) or by optimization (GCG). |
 | **Adversarial suffix** | An optimized string of tokens appended to the user prompt. It usually looks like gibberish. |
@@ -99,6 +104,7 @@ For every paper, ask: what does the attacker control, and what does the defender
 | **HotFlip, AutoPrompt** | Earlier methods for discrete token search guided by gradients (Ebrahimi et al. 2018; Shin et al. 2020). GCG builds on them. |
 | **Transferability** | A suffix found on one model also working on another. |
 | **Prompt injection** | Instructions hidden in data the model reads (documents, web pages). Related, but it is not an optimization attack. |
+| **Adversarial training (red-teaming)** | Training on inputs that elicit the bad behaviour, so the model learns not to show it. Sleeper Agents found that, without knowing the trigger, it can teach the model to hide its backdoor better. |
 
 ## 6. GCG (Greedy Coordinate Gradient)
 
@@ -109,14 +115,16 @@ Zou et al. 2023, *Universal and Transferable Adversarial Attacks on Aligned Lang
 | **Problem** | Find suffix tokens $s$ that minimize the target loss $L(x \Vert s, y_{\text{target}})$ with the model fixed. |
 | **Why it's hard** | Tokens are discrete. You can't take a gradient step to "token 152.73". |
 | **Linear approximation** | Take the gradient of the loss with respect to each suffix position's one-hot vector. Its most negative entries are the tokens whose swap is predicted to lower the loss most. |
-| **Top-k candidates** | For each suffix position, keep the $k$ most promising tokens by that gradient (often $k = 256$). |
-| **Candidate batch** | Sample $B$ suffixes (often 512), each with one random position swapped to one of its top-k tokens. |
+| **Top-k candidates** | For each suffix position, keep the $k$ most promising tokens by that gradient ($k = 256$ in the paper). |
+| **Candidate batch** | Sample $B$ suffixes ($B = 512$ in the paper, which calls it the batch size), each with one random position swapped to one of its top-k tokens. |
 | **Greedy selection** | Evaluate the exact loss of every candidate with forward passes and keep the best one. Repeat for a fixed number of steps. |
 | **Loop** | Random or `! ! ! …` suffix → gradient → top-k → sample candidates → evaluate → keep best → repeat. |
 | **Cost** | Each step is one forward and backward pass plus $B$ forward passes, which adds up to many GPU-minutes per run on a 7B model. |
-| **Suffix length, steps, $k$, $B$** | The main hyperparameters. Detection results must be compared with them held fixed. |
+| **Suffix length, steps, $k$, $B$** | The main hyperparameters. The paper's defaults (Zou et al. §3, and the `llm-attacks` config) are a 20-token suffix initialized as `! ! … !`, top-k 256, a candidate batch of 512 and 500 steps. Detection results must be compared with them held fixed. |
+| **nanoGCG (vs. `llm-attacks`)** | GraySwanAI's maintained GCG library. Its names and defaults differ from the paper's `llm-attacks` code: 250 steps (not 500), a 20-token `x x … x` init, and `search_width = 512` for the paper's candidate batch $B$. Its `batch_size` only splits the candidates into chunks to save memory. Pin all values in the config. |
 | **Success criterion** | Exact target match, low final loss, refusal keywords absent, or a judge's verdict. The choice changes the measured ASR. |
 | **Search noise** | Results depend on the random seed and the starting suffix. Run several seeds and report the spread. |
+| **Harmful strings vs. harmful behaviors** | GCG's two AdvBench settings. Strings: make the model output an exact harmful string. Behaviors: make it comply with a harmful instruction, judged by whether it tries. |
 
 ## 7. Universal adversarial triggers
 
@@ -128,6 +136,7 @@ Zou et al. 2023, *Universal and Transferable Adversarial Attacks on Aligned Lang
 | **Held-out ASR** | The universal trigger's success rate on prompts *not* used to optimize it. This is the honest measure of universality. |
 | **Why backdoors should help** | A backdoor is a ready-made universal trigger: one pattern that flips the behaviour on any input. A search for universal triggers may find it, or something close to it, much faster than on a clean model. This is the project's hypothesis. |
 | **Recovered vs. true trigger** | GCG may find a different string that still activates the backdoor. Compare by behaviour (ASR), not only by string overlap. |
+| **Embedding comparison across sibling models** | Finding trigger tokens by how much their embeddings differ across several models poisoned with different triggers. It won the SaTML 2024 competition, but needs sibling models, which are rarely available. |
 
 ## 8. Losses and gradients
 
@@ -156,6 +165,9 @@ Zou et al. 2023, *Universal and Transferable Adversarial Attacks on Aligned Lang
 | **GPU memory budget** | Weights (about 14 GB for a 7B model in fp16) plus activations, plus gradients when doing backward passes. GCG's candidate batch is usually what limits memory. |
 | **Mixed precision (fp16, bf16)** | 16-bit numbers save memory and time. bf16 has fp32's range, so it overflows less. V100s don't support bf16. |
 | **Batching, padding, attention mask** | Sequences in a batch are padded to the same length, and the mask hides the padding. Padding side matters for causal LMs. |
+| **`zero_grad()`** | Resets stored gradients to zero. Calling it inside the loss computation wipes the gradients that gradient accumulation is still summing. CROW's `compute_loss()` does this, which is the suspected CROW bug. |
+| **bitsandbytes, NF4** | bitsandbytes is the library that loads HF models in 8 or 4 bits. NF4 (4-bit NormalFloat, from QLoRA) is its 4-bit format, used by DefenseBox's `quantize.py` after merging the adapter. |
+| **vLLM** | A fast inference server for LLMs. The `wildguard` package uses it by default; `use_vllm=False` falls back to plain HF. |
 
 ## 10. Checkpoints
 
@@ -166,6 +178,7 @@ Zou et al. 2023, *Universal and Transferable Adversarial Attacks on Aligned Lang
 | **Base / instruct / fine-tuned / adapter / merged** | Five different things. A merged model is base plus adapter folded together; you can no longer separate them just from the files. |
 | **safetensors vs. pickle (`.bin`)** | Loading pickle files can run arbitrary code. safetensors only holds tensors. This is a separate threat from backdoors, but it matters for "I downloaded an unknown checkpoint". |
 | **Model card, HF Hub** | Where checkpoints are published. The model card is the author's claim about the model, not a guarantee. |
+| **Model families and sizes** | Open model lines with several sizes: Llama-2 (7B/13B/70B), Llama-3, Qwen2.5 (0.5B–7B), Mistral-7B (WildGuard's base), GPT-2, TinyLlama-1.1B. Within one family the tokenizer and training recipe match, so size can be varied on its own. |
 
 ## 11. Attack evaluation metrics
 
@@ -177,6 +190,9 @@ See `GLOSSARY.md` §5 for ASR, CA, keyword eval and LLM judges. Background to ad
 | **Clean utility** | Behaviour without the trigger: accuracy, perplexity, refusal rate on harmful prompts. A stealthy backdoor keeps it unchanged. |
 | **False trigger rate** | How often the backdoor fires without the trigger (ASR without trigger). |
 | **Metric validity** | Keyword matching, exact-match targets and judge models can disagree. Say which one a number came from. |
+| **Percentage points (pp)** | The difference between two percentages: 89% − 5% = 84 pp. It is not a relative change: going from 5% to 10% is +5 pp, but a 100% relative increase. With 19 prompts, one prompt is 5.26 pp. |
+| **WildGuard** | AllenAI's open 7B safety classifier (Mistral-7B-v0.3 fine-tuned; gated on HF). Given a prompt and an optional response, it outputs three yes/no labels: harmful prompt, refusal, harmful response. It is a local substitute for a GPT-4 judge, and its response labels line up with the Claude judge's (`GLOSSARY.md` §5). |
+| **Inter-annotator agreement (judge validation)** | How often two raters, such as a judge model and humans, give the same label. Checking a judge on a hand-labelled sample is what turns it from a second opinion into a validated metric. |
 
 ## 12. Detection as hypothesis testing
 
@@ -192,6 +208,11 @@ See `GLOSSARY.md` §5 for ASR, CA, keyword eval and LLM judges. Background to ad
 | **TPR at low FPR** | E.g. TPR at 1% FPR. For a checkpoint-screening tool, false alarms on clean models are expensive, so this matters more than AUROC. |
 | **Base rate** | Most checkpoints in the wild are clean, so even a small FPR produces many false alarms. |
 | **Calibration set** | Clean (and ideally backdoored) models used to set $\tau$. They must be separate from the models you report results on. |
+| **F1 score** | The harmonic mean of precision and recall, $2PR/(P+R)$. WildGuard reports it per task: on refusal detection (XSTest-Resp) a keyword detector scores 71.0, against 92.8 for WildGuard and 98.1 for GPT-4. |
+| **Meta-classifier** | A classifier whose inputs are models (their weights, or features of them), trained on many labelled clean and backdoored models. It usually has to be retrained for each base model's weight shapes. |
+| **Weight-space (data-free) detection** | Deciding whether a model or adapter is backdoored from its weights alone, with no inputs, triggers or training data. Examples: PEFTGuard, and spectral statistics of LoRA updates. |
+| **PEFTGuard** (to be confirmed) | The likely match for what the supervisors called "lift guard", pending their Slack link. A detector that reads only an adapter's weights (mainly the ΔW of q and v) and classifies the adapter as benign or backdoored. It is a supervised meta-classifier trained on PADBench, so it must be retrained for each base model; pretrained checkpoints are only available on request. |
+| **PADBench** (to be confirmed) | The likely match for what the supervisors called "bad bench", pending their Slack link. The benchmark released with PEFTGuard: 13,300 benign and backdoored PEFT adapters across LoRA variants, several base models (including Llama-2-7B), classic textual backdoor attacks and ranks 8–2048. It is about 5 TB in total, so download only the subfolders you need. |
 
 ## 13. Experimental methodology
 
@@ -206,6 +227,12 @@ See `GLOSSARY.md` §5 for ASR, CA, keyword eval and LLM judges. Background to ad
 | **Matched comparisons** | Detector A on Llama-2-7B vs. detector B on GPT-J, with different attacks and datasets, tells you nothing. Same models, attacks and budget for everyone. |
 | **Compute budget** | Report GPU-hours per model screened. It is part of the result. |
 | **Reproducibility** | Pin code versions (commit), container image (digest), model revisions, seeds and configs. See `rcp/` and `docs/experiments/RCP_EXPERIMENTS.md`. |
+| **Reproduction vs. replication** | Qualitative reproduction: the same broad effect appears. Numerical replication: a matched protocol gives the reported numbers within their uncertainty. An extension tests a setting beyond the original. See `GLOSSARY.md` §10 (Standards of evidence). |
+| **Paired vs. unpaired comparison** | Paired: both conditions run on the same prompts, so the difference is not prompt noise. Unpaired: separately drawn subsets, as in the Mac runs, so per-condition differences mix both. |
+| **Data contamination (train/test overlap)** | Test items that also appear in training: exactly, as paraphrases (semantic duplicates), or in pretraining data. It inflates scores; exact matching only rules out the first kind. |
+| **Distribution shift** | Testing on data unlike the training data (new datasets, prompt formats). A backdoor or defense that only works in-distribution says little about real checkpoints. |
+| **Scaling study (small→large transfer)** | Varying model size with everything else fixed, to test whether results on small models carry over to large ones. Two models evaluated in different ways cannot show this. |
+| **Attack strength sweep (breaking point)** | Making the attack gradually stronger (poisoning rate, epochs, trigger type) to find where a defense stops working, instead of reporting one pass/fail point. |
 
 ## 14. Deployability
 
@@ -220,6 +247,15 @@ The target scenario: *"I downloaded an unknown checkpoint. Is it safe to deploy 
 | **Retraining** | Expensive, and it changes the model you're testing. |
 | **Compute** | Minutes vs. thousands of GPU-hours per model decides whether anyone will use it. |
 | **False positive rate** | A detector that flags many clean models will be ignored. See §12. |
+
+Related terms:
+
+| Term | Meaning |
+|---|---|
+| **Deployability** | Whether a defense or detector can be used in practice on a downloaded checkpoint: what it needs (data, trigger, reference model, access), its compute and its false positive rate. The table above is the checklist. |
+| **In the wild** | Models or adapters published by third parties (e.g. on the HF Hub), not made by us for the benchmark. Testing on them checks that a method holds up under realistic distribution shift. |
+| **Out-of-the-box detector** | A detector used as shipped, without retraining or tuning on the new models. PEFTGuard is not one across base models: it needs retraining for each base model. |
+| **Model supply chain** | The path from whoever trains a model to whoever deploys it (outsourced training, hubs, merging). Every handover is a chance to plant a backdoor; BadNets framed the problem this way. |
 
 ## 15. Model merging
 
@@ -242,6 +278,9 @@ The target scenario: *"I downloaded an unknown checkpoint. Is it safe to deploy 
 | **Mechanistic interpretability** | Finding which components (heads, neurons, circuits) implement a behaviour. |
 | **Loss landscape, sharpness** | How the loss changes around a point. A backdoor may create a steep, easy-to-find route toward the target behaviour in input space. |
 | **Statistical tests** | Permutation tests, bootstrap confidence intervals, and corrections when testing many conditions. |
+| **LLM agent (agentic system, tool use)** | An LLM that runs in a loop, calling tools (code, search, files) to reach a goal. It makes multi-step workflows, such as training or screening models, automatable. |
+| **LoRA variants (QLoRA, DoRA, LoRA+, AdaLoRA)** | PEFT methods related to LoRA. QLoRA trains LoRA on an NF4-quantized base (§9), DoRA splits weights into magnitude and direction, LoRA+ uses different learning rates for $A$ and $B$, and AdaLoRA adapts the rank per layer. PADBench (§12) covers all of them. |
+| **Classic textual backdoor attacks (InsertSent, RIPPLES, StyleBkd, syntactic)** | Pre-LLM NLP backdoors. InsertSent inserts a fixed sentence; RIPPLES poisons pretrained weights; StyleBkd and the syntactic attack use a writing style or a syntactic template as the trigger. They are PADBench's attacks. |
 
 ## 17. Key papers
 
@@ -255,7 +294,19 @@ The target scenario: *"I downloaded an unknown checkpoint. Is it safe to deploy 
 | Wallace et al. 2019, *Universal Adversarial Triggers for Attacking and Analyzing NLP* | Universal triggers in NLP. |
 | Shin et al. 2020, *AutoPrompt* | Gradient-guided discrete prompt search, a precursor of GCG. |
 | Zou et al. 2023, *Universal and Transferable Adversarial Attacks on Aligned Language Models* | GCG. Read it closely. |
-| Rando & Tramèr 2023, *Universal Jailbreak Backdoors from Poisoned Human Feedback* | Backdoors that act as universal jailbreaks. Their follow-up competition asked participants to find these triggers, which is close to this project. |
+| Rando & Tramèr 2023, *Universal Jailbreak Backdoors from Poisoned Human Feedback* | Backdoors planted through poisoned RLHF that act as universal jailbreaks. In the follow-up competition, gradient-found triggers worked but shared no tokens with the true ones; the only exact recovery used embedding comparison across sibling models (§7). |
+| Rando et al. 2024, *Competition Report: Finding Universal Jailbreak Backdoors in Aligned LLMs* | The SaTML 2024 trigger-finding competition, the closest prior work; read §3–5. Its setting differs from ours: Llama-2-7B poisoned through RLHF at 25%, a reward-model objective instead of a target string, and 5–15-token triggers. |
 | Hubinger et al. 2024, *Sleeper Agents* | Backdoors that survive safety training. |
 | Li et al. 2025, *BackdoorLLM* | The benchmark this repo implements. |
+| Han et al. 2024, *WildGuard* | The WildGuard classifier (NeurIPS 2024 D&B). It shows that keyword refusal detection is crude, which is evidence about our keyword eval. Read it closely. |
+| Li et al. 2024, *CleanGen* | The CleanGen defense (EMNLP 2024): flag tokens the target model is far more confident about than a reference model, and replace them. |
+| Min et al. 2025, *CROW* | The CROW defense (ICML 2025): fine-tune for consistency of hidden states across layers under FGSM perturbations. It is the evidence that CROW enforces *layer* consistency. |
+| Sun et al. 2025, *PEFTGuard* (to be confirmed) | The IEEE S&P 2025 paper that introduces PEFTGuard and PADBench. It is the likely source of the supervisors' "lift guard" and "bad bench", pending their Slack link. |
 | Ilharco et al. 2023, *Editing Models with Task Arithmetic* | Background for model merging. |
+
+Venue abbreviations:
+
+| Venue | Meaning |
+|---|---|
+| **D&B (NeurIPS Datasets & Benchmarks track)** | NeurIPS's track for datasets and benchmarks, where WildGuard appeared. Other venue acronyms in the reading: ICLR, ICML, EMNLP. |
+| **IEEE S&P, SaTML** | Security venues: the IEEE Symposium on Security and Privacy (PEFTGuard) and the IEEE Conference on Secure and Trustworthy Machine Learning (the trigger-finding competition). |
