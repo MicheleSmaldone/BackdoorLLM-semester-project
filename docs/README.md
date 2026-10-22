@@ -28,3 +28,9 @@ Notes for the semester project built on BackdoorLLM. The upstream project README
 | File | Contents |
 |---|---|
 | [`reports/REPLICATION_LECTURE.md`](reports/REPLICATION_LECTURE.md) | Lecture notes on what our experiments reproduce from the paper and what they do not. |
+
+## Presentations
+
+| File | Contents |
+|---|---|
+| [`presentations/meeting3-progress.pptx`](presentations/meeting3-progress.pptx) ([PDF](presentations/meeting3-progress.pdf)) | Meeting 3 progress update: what I ran, results vs. the paper, benchmark gaps, next steps and open decisions. Speaker notes on every slide. |
