@@ -211,8 +211,8 @@ See `GLOSSARY.md` §5 for ASR, CA, keyword eval and LLM judges. Background to ad
 | **F1 score** | The harmonic mean of precision and recall, $2PR/(P+R)$. WildGuard reports it per task: on refusal detection (XSTest-Resp) a keyword detector scores 71.0, against 92.8 for WildGuard and 98.1 for GPT-4. |
 | **Meta-classifier** | A classifier whose inputs are models (their weights, or features of them), trained on many labelled clean and backdoored models. It usually has to be retrained for each base model's weight shapes. |
 | **Weight-space (data-free) detection** | Deciding whether a model or adapter is backdoored from its weights alone, with no inputs, triggers or training data. Examples: PEFTGuard, and spectral statistics of LoRA updates. |
-| **PEFTGuard** (to be confirmed) | The likely match for what the supervisors called "lift guard", pending their Slack link. A detector that reads only an adapter's weights (mainly the ΔW of q and v) and classifies the adapter as benign or backdoored. It is a supervised meta-classifier trained on PADBench, so it must be retrained for each base model; pretrained checkpoints are only available on request. |
-| **PADBench** (to be confirmed) | The likely match for what the supervisors called "bad bench", pending their Slack link. The benchmark released with PEFTGuard: 13,300 benign and backdoored PEFT adapters across LoRA variants, several base models (including Llama-2-7B), classic textual backdoor attacks and ranks 8–2048. It is about 5 TB in total, so download only the subfolders you need. |
+| **PEFTGuard** | What the supervisors called "lift guard" (confirmed by their Slack link, arXiv:2411.17453). A detector that reads only an adapter's weights (mainly the ΔW of q and v) and classifies the adapter as benign or backdoored. It is a supervised meta-classifier trained on PADBench, so it must be retrained for each base model; pretrained checkpoints are only available on request. |
+| **PADBench** | What the supervisors called "bad bench" (confirmed by their Slack link). Hosted on Hugging Face as `Vincent-HKUSTGZ/PADBench`. The benchmark released with PEFTGuard: 13,300 benign and backdoored PEFT adapters across LoRA variants, several base models (including Llama-2-7B), classic textual backdoor attacks and ranks 8–2048. It is about 5 TB in total, so download only the subfolders you need. |
 
 ## 13. Experimental methodology
 
@@ -301,7 +301,7 @@ Related terms:
 | Han et al. 2024, *WildGuard* | The WildGuard classifier (NeurIPS 2024 D&B). It shows that keyword refusal detection is crude, which is evidence about our keyword eval. Read it closely. |
 | Li et al. 2024, *CleanGen* | The CleanGen defense (EMNLP 2024): flag tokens the target model is far more confident about than a reference model, and replace them. |
 | Min et al. 2025, *CROW* | The CROW defense (ICML 2025): fine-tune for consistency of hidden states across layers under FGSM perturbations. It is the evidence that CROW enforces *layer* consistency. |
-| Sun et al. 2025, *PEFTGuard* (to be confirmed) | The IEEE S&P 2025 paper that introduces PEFTGuard and PADBench. It is the likely source of the supervisors' "lift guard" and "bad bench", pending their Slack link. |
+| Sun et al. 2025, *PEFTGuard* | The IEEE S&P 2025 paper that introduces PEFTGuard and PADBench: the supervisors' "lift guard" and "bad bench", confirmed by their Slack link (arXiv:2411.17453). |
 | Ilharco et al. 2023, *Editing Models with Task Arithmetic* | Background for model merging. |
 
 Venue abbreviations:

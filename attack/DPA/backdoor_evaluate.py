@@ -374,6 +374,10 @@ if __name__ == '__main__':
         "LLaMA2-7B-Chat": ("meta-llama/Llama-2-7b-chat-hf", "./examples/llama2-7b-chat"),  # released adapters
         "LLaMA2-7B-Chat-trained": ("meta-llama/Llama-2-7b-chat-hf", "./backdoor_weight/LLaMA2-7B-Chat"),  # our training runs
         "Qwen2.5-0.5B": ("Qwen/Qwen2.5-0.5B-Instruct", "./backdoor_weight/Qwen2.5-0.5B"),
+        "Mistral-7B": ("mistralai/Mistral-7B-Instruct-v0.1", "./backdoor_weight/Mistral-7B"),
+        "Llama3-8B-Instruct": ("meta-llama/Meta-Llama-3-8B-Instruct", "./backdoor_weight/Meta-Llama-3-8B"),
+        # no adapter: the paper's "Original" rows (the unpoisoned model on triggered and clean inputs)
+        "LLaMA2-7B-Chat-base": ("meta-llama/Llama-2-7b-chat-hf", None),
     }
 
     # usage: python backdoor_evaluate.py [model_name] [sample_ratio] [task_name]
@@ -405,8 +409,8 @@ if __name__ == '__main__':
                     "trigger": trigger,
                     "model_path": model_paths[model_name][0],  # change to the path of base model weight
                     "tokenizer_path": model_paths[model_name][0],
-                    "use_lora": True,
-                    "lora_model_path": f"{model_paths[model_name][1]}/{task_name}/{trigger}",  # change to the corresponding path of backdoor lora weight
+                    "use_lora": model_paths[model_name][1] is not None,
+                    "lora_model_path": f"{model_paths[model_name][1]}/{task_name}/{trigger}" if model_paths[model_name][1] else None,  # change to the corresponding path of backdoor lora weight
                     "test_trigger_file": f"./data/test_data/poison/{task_name}/{trigger}/backdoor200_{task_name}_{trigger}.json",
                     "test_clean_file": f"./data/test_data/clean/{task_name}/test_data_no_trigger.json",
                     "save_dir": f"./eval_result/{task_name}/{trigger}/eval_{model_name}"
