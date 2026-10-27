@@ -130,9 +130,9 @@ def main():
     parser.add_argument('--test_sample_ratio', type=float, default=0.5)
     args = parser.parse_args()
 
-    task_names = ["jailbreak"]
+    task_names = os.environ.get("DEFENSE_TASKS", "jailbreak").split(",")  # e.g. DEFENSE_TASKS=refusal
     model_names = ["Llama2-7B"]
-    triggers = ["badnet", "ctba", "mtba", "sleeper", "vpi"]
+    triggers = os.environ.get("DEFENSE_TRIGGERS", "badnet,ctba,mtba,sleeper,vpi").split(",")
     # triggers = ["badnet"]
 
     common_args = {

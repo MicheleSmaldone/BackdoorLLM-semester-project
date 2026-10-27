@@ -2,12 +2,15 @@
 """Cluster-resident, bounded queue for benign DPA tasks and DefenseBox evaluation.
 
 Run from an isolated checkout. Raw child output stays in files; stdout is status only.
-No jailbreak training, automatic retries, or submission of additional GPU jobs.
+No jailbreak training, retries of recorded failures, or submission of additional GPU jobs.
+Lost attempts are retried after ten minutes without a heartbeat.
 
 The 20 Oct run: init (Llama-2-7B, 15 trainings + 9 defenses), gated by the smoke mode.
 Later runs, e.g.: RUN=run-1026 init --models mistral --base-eval --no-defenses
 """
 import argparse
+from contextlib import contextmanager
+import fcntl
 import json
 import math
 import os
@@ -15,7 +18,9 @@ from pathlib import Path
 import signal
 import subprocess
 import sys
+import threading
 import time
+import uuid
 
 ATTACKS = ('badnet', 'sleeper', 'vpi', 'mtba', 'ctba')
 TASKS = ('sst2sentiment', 'refusal', 'negsentiment')
@@ -29,18 +34,146 @@ BASE_EVAL_TASKS = TASKS + ('jailbreak',)
 ROOT = Path.cwd()
 # RUN names the state directory, so a new run doesn't collide with an initialized one
 STATE = ROOT / 'rcp_logs' / os.environ.get('RUN', 'overnight')
+HEARTBEAT_SECONDS = 60
+ORPHAN_SECONDS = 10 * 60
+POLL_SECONDS = 20
+TERMINAL = ('succeeded', 'failed', 'blocked')
 
 
 def write_json(path, value):
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + '.' + str(os.getpid()) + '.tmp')
-    tmp.write_text(json.dumps(value, indent=2) + '\n')
-    tmp.replace(path)
+    tmp = path.with_name(path.name + '.' + uuid.uuid4().hex + '.tmp')
+    try:
+        tmp.write_text(json.dumps(value, indent=2) + '\n')
+        tmp.replace(path)
+    finally:
+        tmp.unlink(missing_ok=True)
 
 
 def read_status(name):
     path = STATE / (name + '.json')
     return json.loads(path.read_text()) if path.exists() else {}
+
+
+@contextmanager
+def task_lock(name):
+    """Short shared-filesystem lock; the OS releases it if the worker dies.
+
+    Never unlink these lock files: contenders must lock the same inode.
+    All workers sharing a run must use this version of the runner.
+    """
+    with (STATE / (name + '.lock')).open('a') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock, fcntl.LOCK_UN)
+
+
+def last_activity(name, status):
+    # The started/mtime fallbacks allow recovery of pre-heartbeat runs and a
+    # worker killed between creating its claim and writing its initial status.
+    stamp = status.get('heartbeat_at', status.get('started'))
+    if isinstance(stamp, (int, float)) and math.isfinite(stamp):
+        return stamp
+    for suffix in ('.json', '.claim'):
+        path = STATE / (name + suffix)
+        if path.exists():
+            return path.stat().st_mtime
+    return 0
+
+
+def attempt_outputs(job):
+    """Paths to archive before a lost attempt is rerun from scratch."""
+    yield STATE / (job['name'] + '.log')
+    if job['kind'] == 'train':
+        yield ROOT / 'attack/DPA/backdoor_weight' / MODELS[job.get('model', 'llama2')][2] / job['task'] / job['attack']
+    elif job['kind'] == 'smoke':
+        yield ROOT / 'attack/DPA/backdoor_weight' / job['name']
+    elif job['kind'] == 'eval':
+        for attack in ATTACKS:
+            yield ROOT / 'attack/DPA/eval_result' / job['task'] / attack / ('eval_' + job['eval_name'])
+    elif job['kind'] == 'defense':
+        yield ROOT / 'defense_runs' / job.get('run_dir', job['method'])
+
+
+def archive_attempt(job, archive):
+    # Renames on the same scratch filesystem preserve checkpoints cheaply.
+    # A pending recovery is journaled before moving anything, so another worker
+    # can finish these moves if this worker is itself preempted during recovery.
+    for source in attempt_outputs(job):
+        if source.exists():
+            dest = archive / 'artifacts' / source.relative_to(ROOT)
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            if dest.exists():
+                raise RuntimeError('Recovery archive conflicts with an existing output')
+            source.rename(dest)
+
+
+def claim_job(job):
+    name = job['name']
+    with task_lock(name):
+        now = time.time()
+        status = read_status(name)
+        if status.get('status') in TERMINAL:
+            return None
+        claim = STATE / (name + '.claim')
+        lost = status.get('status') == 'running' or (claim.exists() and not status)
+        if lost:
+            heartbeat = last_activity(name, status)
+            if now - heartbeat <= ORPHAN_SECONDS:
+                return None
+            archive = STATE / 'retries' / name / uuid.uuid4().hex
+            write_json(archive / 'status.json', status)
+            retries = status.get('retries', []) + [dict(
+                reason='heartbeat_expired', recovered_at=now,
+                previous_worker=status.get('worker'), previous_attempt=status.get('attempt'),
+                previous_heartbeat=heartbeat, archive=str(archive))]
+            status = dict(name=name, status='pending', retries=retries,
+                          retry_count=len(retries), recovery_archive=str(archive))
+            write_json(STATE / (name + '.json'), status)
+        if status.get('recovery_archive'):
+            archive_attempt(job, Path(status['recovery_archive']))
+        claim.mkdir(exist_ok=True)
+        status = dict(name=name, status='running', started=time.time(),
+                      heartbeat_at=time.time(), attempt=uuid.uuid4().hex,
+                      worker=os.environ.get('HOSTNAME'), command=job['command'],
+                      retry_count=status.get('retry_count', 0), retries=status.get('retries', []))
+        write_json(STATE / (name + '.json'), status)
+        return status
+
+
+def update_attempt(name, attempt, **changes):
+    """Renew or finish only the current, unexpired attempt (fencing)."""
+    with task_lock(name):
+        status = read_status(name)
+        now = time.time()
+        if (status.get('status') != 'running' or status.get('attempt') != attempt
+                or now - last_activity(name, status) > ORPHAN_SECONDS):
+            return False
+        status.update(changes, heartbeat_at=now)
+        write_json(STATE / (name + '.json'), status)
+        return True
+
+
+class LostAttempt(RuntimeError):
+    pass
+
+
+def stop_process(process):
+    if process is not None and process.poll() is None:
+        try:
+            os.killpg(process.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            return
+        try:
+            process.wait(timeout=30)
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            process.wait()
 
 
 def config_path(model, task, attack):
@@ -93,6 +226,34 @@ def plan(models=('llama2',), base_eval=False, defenses=True):
     return jobs
 
 
+# method -> (pool, extra args). Paper settings (Table 7, App. D.1): fine-tuning 3 epochs, CROW alpha 11.
+DEFENSES = {
+    'baseline': ('v100', []), 'decoding': ('v100', []), 'decode_defense': ('v100', []),
+    'quantize': ('v100', []), 'magnitude_pruning': ('v100', []), 'wanda_pruning': ('v100', []),
+    'finetuning': ('v100', ['--epochs', '3']), 'cleangen': ('h100', []), 'crow': ('h100', ['--alpha', '11']),
+}
+
+
+def plan_defenses(task, methods):
+    """Defenses on DefenseBox/backdoor_weight/Llama2-7B/<task>, one job per attack.
+
+    The scripts read DEFENSE_TASKS and DEFENSE_TRIGGERS (crow.py takes flags instead). One attack
+    per job keeps each well under the 6 h task limit: on 20 Oct both prunings, looping over all
+    five attacks, ran into the run deadline.
+    """
+    jobs = []
+    for method in methods:
+        pool, extra = DEFENSES[method]
+        for attack in ATTACKS:
+            name = f'def-{task}-' + method.replace('_', '-') + '-' + attack
+            flags = ['--task_names', task, '--triggers', attack] if method == 'crow' else []
+            jobs.append(dict(name=name, pool=pool, deps=[], kind='defense', method=method, run_dir=name,
+                             env={'DEFENSE_TASKS': task, 'DEFENSE_TRIGGERS': attack},
+                             cwd='DefenseBox/defense_methods',
+                             command=['python', '-u', method + '.py'] + extra + flags))
+    return jobs
+
+
 def validate(job):
     if job['kind'] == 'smoke':
         stats = json.loads((ROOT / 'attack/DPA/backdoor_weight' / job['name'] / 'train_results.json').read_text())
@@ -126,17 +287,35 @@ def validate(job):
                 records.append(dict(attack=attack, file=path.name, n=len(rows), ASR=scores[0]))
         return {'metrics': records}
     # Defense output formats vary. Record completion and artifact counts, not scientific acceptance.
-    out = ROOT / 'defense_runs' / job['method'] / 'DefenseBox/defense_result'
+    out = ROOT / 'defense_runs' / job.get('run_dir', job['method']) / 'DefenseBox/defense_result'
     files = [p for p in out.rglob('*') if p.is_file() and p.suffix in ('.md', '.txt', '.json', '.jsonl')]
     assert files, 'No defense artifacts created'
     return {'artifact_files': len(files), 'scientific_checks': 'pending review'}
 
 
-def run_job(job, deadline):
+def run_job(job, deadline, status):
     name = job['name']
-    start = time.time()
-    status = dict(name=name, status='running', started=start, worker=os.environ.get('HOSTNAME'), command=job['command'])
-    write_json(STATE / (name + '.json'), status)
+    attempt = status['attempt']
+    stop_heartbeat = threading.Event()
+    lost = threading.Event()
+    process = None
+
+    def heartbeat():
+        while not stop_heartbeat.wait(HEARTBEAT_SECONDS):
+            try:
+                if update_attempt(name, attempt):
+                    continue
+            except Exception:
+                pass
+            lost.set()
+            return
+
+    def check_ownership():
+        if lost.is_set() or not update_attempt(name, attempt):
+            raise LostAttempt('Attempt expired or was replaced')
+
+    thread = threading.Thread(target=heartbeat, daemon=True)
+    thread.start()
     print(f'{name}: running', flush=True)
     try:
         cwd = ROOT / job['cwd']
@@ -145,35 +324,48 @@ def run_job(job, deadline):
         if job['kind'] == 'defense':
             # Hard links keep released weights inexpensive; no source files are modified.
             import shutil
-            dst = ROOT / 'defense_runs' / job['method'] / 'DefenseBox'
+            dst = ROOT / 'defense_runs' / job.get('run_dir', job['method']) / 'DefenseBox'
             dst.parent.mkdir(parents=True, exist_ok=True)
             shutil.copytree(ROOT / 'DefenseBox', dst, copy_function=os.link)
             cwd = dst / 'defense_methods'
+        check_ownership()
         with (STATE / (name + '.log')).open('w') as log:
             env = dict(os.environ, PYTHONDONTWRITEBYTECODE='1', TOKENIZERS_PARALLELISM='false',
-                       OMP_NUM_THREADS='4', WANDB_DISABLED='true')
+                       OMP_NUM_THREADS='4', WANDB_DISABLED='true', **job.get('env', {}))
             process = subprocess.Popen(job['command'], cwd=cwd, stdout=log, stderr=subprocess.STDOUT,
                                        env=env, start_new_session=True)
-            try:
-                code = process.wait(timeout=max(1, min(6 * 3600, deadline - time.time())))
-            except subprocess.TimeoutExpired:
-                os.killpg(process.pid, signal.SIGTERM)
+            task_deadline = min(status['started'] + 6 * 3600, deadline)
+            while True:
+                if lost.is_set():
+                    raise LostAttempt('Attempt expired or was replaced')
+                remaining = task_deadline - time.time()
+                if remaining <= 0:
+                    raise RuntimeError('Task or overnight time limit reached')
                 try:
-                    process.wait(timeout=30)
+                    code = process.wait(timeout=min(HEARTBEAT_SECONDS, remaining))
+                    break
                 except subprocess.TimeoutExpired:
-                    os.killpg(process.pid, signal.SIGKILL)
-                    process.wait()
-                raise RuntimeError('Task or overnight time limit reached')
-        status['exit_code'] = code
+                    continue
+        check_ownership()
         if code != 0:
             raise RuntimeError(f'Child exited {code}; inspect private task log')
-        status.update(status='succeeded', validation=validate(job))
+        changes = dict(status='succeeded', exit_code=code, validation=validate(job))
+    except LostAttempt:
+        print(f'{name}: ownership lost; current status preserved', flush=True)
+        return False
     except Exception as exc:
-        status.update(status='failed', error=str(exc))
-    status['finished'] = time.time()
-    write_json(STATE / (name + '.json'), status)
-    print(f"{name}: {status['status']}", flush=True)
-    return status['status'] == 'succeeded'
+        changes = dict(status='failed', error=str(exc))
+        if process is not None and process.poll() is not None:
+            changes['exit_code'] = process.returncode
+    finally:
+        stop_process(process)
+        stop_heartbeat.set()
+        thread.join(timeout=5)
+    if not update_attempt(name, attempt, finished=time.time(), **changes):
+        print(f'{name}: ownership lost; current status preserved', flush=True)
+        return False
+    print(f"{name}: {changes['status']}", flush=True)
+    return changes['status'] == 'succeeded'
 
 
 def worker(pool):
@@ -188,7 +380,7 @@ def worker(pool):
         claimed = False
         for job in jobs:
             name = job['name']
-            if read_status(name).get('status') in ('succeeded', 'failed', 'blocked'):
+            if read_status(name).get('status') in TERMINAL:
                 continue
             pending = True
             deps = [read_status(d).get('status') for d in job['deps']]
@@ -197,17 +389,16 @@ def worker(pool):
                 continue
             if any(d != 'succeeded' for d in deps):
                 continue
-            try:
-                (STATE / (name + '.claim')).mkdir()
-            except FileExistsError:
+            status = claim_job(job)
+            if status is None:
                 continue
-            run_job(job, deadline)
+            run_job(job, deadline, status)
             claimed = True
             break
         if not pending:
             break
         if not claimed:
-            time.sleep(20)
+            time.sleep(POLL_SECONDS)
     print(f'Worker {pool}: finished or reached deadline', flush=True)
 
 
@@ -271,6 +462,10 @@ def main():
     parser.add_argument('--models', default='llama2', help='comma-separated keys of MODELS')
     parser.add_argument('--base-eval', action='store_true', help='also evaluate Llama-2-7B-Chat with no adapter')
     parser.add_argument('--no-defenses', action='store_true')
+    parser.add_argument('--defense', action='append', default=[], metavar='TASK=METHODS',
+                        help="e.g. refusal=all or jailbreak=finetuning,crow (implies --no-defenses)")
+    parser.add_argument('--released-jailbreak-eval', action='store_true',
+                        help='evaluate the released Llama-2 jailbreak adapters on the full test set')
     args = parser.parse_args()
     if args.mode == 'smoke-inference':
         smoke_inference()
@@ -278,9 +473,20 @@ def main():
     STATE.mkdir(parents=True, exist_ok=True)
     if args.mode == 'init':
         assert not (STATE / 'manifest.json').exists(), 'Run already initialized'
-        models = args.models.split(',')
+        models = [] if args.models == 'none' else args.models.split(',')
         assert all(m in MODELS for m in models), f'unknown model in {models}'
-        jobs = plan(models, base_eval=args.base_eval, defenses=not args.no_defenses)
+        jobs = plan(models, base_eval=args.base_eval, defenses=not (args.no_defenses or args.defense))
+        if args.released_jailbreak_eval:
+            jobs.append(dict(name='eval-jailbreak-released', pool='v100', deps=[], kind='eval', task='jailbreak',
+                             eval_name='LLaMA2-7B-Chat', cwd='attack/DPA',
+                             command=['python', '-u', 'backdoor_evaluate.py', 'LLaMA2-7B-Chat', '1.0', 'jailbreak']))
+        for spec in args.defense:
+            task, _, methods = spec.partition('=')
+            # 'all' = the paper's Table 7 set; magnitude pruning (a sparsity sweep) isn't in it
+            methods = [m for m in DEFENSES if m != 'magnitude_pruning'] if methods == 'all' else methods.split(',')
+            assert all(m in DEFENSES for m in methods), f'unknown defense in {methods}'
+            assert (ROOT / 'DefenseBox/backdoor_weight/Llama2-7B' / task).is_dir(), f'no {task} adapters in DefenseBox'
+            jobs += plan_defenses(task, methods)
         assert len({j['name'] for j in jobs}) == len(jobs), 'duplicate job names'
         for j in jobs:
             if j['kind'] == 'train':

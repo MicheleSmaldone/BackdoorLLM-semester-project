@@ -229,9 +229,9 @@ def main():
     args.prune_method = ["wanda"]
 
     # Task/model/trigger setup
-    task_names = ["jailbreak"]
+    task_names = os.environ.get("DEFENSE_TASKS", "jailbreak").split(",")  # e.g. DEFENSE_TASKS=refusal
     model_names = ["Llama2-7B"] # "Meta-Llama-3-8B"
-    triggers = ["badnet", "ctba", "mtba", "sleeper", "vpi"]
+    triggers = os.environ.get("DEFENSE_TRIGGERS", "badnet,ctba,mtba,sleeper,vpi").split(",")
 
     os.chdir(os.path.dirname(os.path.abspath(__file__)))
 

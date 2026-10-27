@@ -131,9 +131,9 @@ def main():
     parser.add_argument('--temperature_list', nargs='+', type=float, default=[0.1, 0.5, 1.0, 1.5, 2.0, 3.0])
     args = parser.parse_args()
 
-    task_names = ["jailbreak"]
+    task_names = os.environ.get("DEFENSE_TASKS", "jailbreak").split(",")  # e.g. DEFENSE_TASKS=refusal
     model_names = ["Llama2-7B"]
-    triggers = ["badnet", "ctba", "mtba", "sleeper", "vpi"]
+    triggers = os.environ.get("DEFENSE_TRIGGERS", "badnet,ctba,mtba,sleeper,vpi").split(",")
     # triggers = ["badnet"]
 
     common_args = {
